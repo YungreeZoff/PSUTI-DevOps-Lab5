@@ -7,19 +7,25 @@
         body { font-family: sans-serif; padding: 20px; background: #f4f4f4; }
         .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         .log { background: #111; color: #0f0; padding: 10px; font-family: monospace; height: 250px; overflow-y: scroll; margin-top: 20px; white-space: pre-wrap; border-radius: 4px; }
-        input, button { padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; }
-        button { cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; }
+        input, select, button { padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; }
+        button { cursor: pointer; background: #007bff; color: white; border: none; font-size: 16px; margin-top: 10px; }
         button:hover { background: #0056b3; }
         .btn-danger { background: #dc3545; }
         .btn-danger:hover { background: #c82333; }
+        .btn-refresh { background: #28a745; width: auto; padding: 10px 20px; margin-bottom: 15px; }
+        .btn-refresh:hover { background: #218838; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>Демонстрация идемпотентности (Вариант 20)</h2>
         
-        <label>ID События (event_id):</label>
-        <input type="text" id="eventId" value="3fa85f64-5717-4562-b3fc-2c963f66afa6">
+        <button class="btn-refresh" onclick="loadEvents()">Обновить список событий</button>
+
+        <label>Выберите событие:</label>
+        <select id="eventId">
+            <option value="">-- Загрузка событий... --</option>
+        </select>
 
         <label>Количество мест (quantity):</label>
         <input type="number" id="quantity" value="1" min="1">
@@ -39,9 +45,41 @@
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
-        // Функция для генерации ключа без crypto.randomUUID
         function generateKey() {
             return 'key-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+        }
+
+        // Загрузка списка событий при старте
+        async function loadEvents() {
+            const select = document.getElementById('eventId');
+            select.innerHTML = '<option value="">Загрузка...</option>';
+            try {
+                const res = await fetch('/api/v1/events');
+                if (!res.ok) throw new Error('Ошибка сети');
+                const json = await res.json();
+                
+                // Бэкенд обычно возвращает данные в формате { "data": [...] }
+                const events = json.data || json; 
+
+                select.innerHTML = '';
+                if (events.length === 0) {
+                    select.innerHTML = '<option value="">Нет доступных событий</option>';
+                    return;
+                }
+
+                events.forEach(ev => {
+                    const option = document.createElement('option');
+                    option.value = ev.id;
+                    // Выводим название и дату для удобства
+                    const date = new Date(ev.starts_at).toLocaleDateString('ru-RU');
+                    option.textContent = `${ev.title} (${date})`;
+                    select.appendChild(option);
+                });
+                log(`Загружено событий: ${events.length}`, '#aaa');
+            } catch (err) {
+                select.innerHTML = '<option value="">Ошибка загрузки</option>';
+                log(`Не удалось загрузить события: ${err.message}`, 'red');
+            }
         }
 
         async function sendRequest(key, eventId, quantity) {
@@ -53,20 +91,14 @@
                         'Content-Type': 'application/json',
                         'Idempotency-Key': key
                     },
-                    body: JSON.stringify({ 
-                        event_id: eventId, 
-                        quantity: parseInt(quantity)
-                    }) 
+                    body: JSON.stringify({ event_id: eventId, quantity: parseInt(quantity) }) 
                 });
                 
                 const textData = await res.text();
                 log(`<- Ответ [${res.status}]: ${textData}`, res.ok ? '#0f0' : '#ff0');
                 
-                try {
-                    return { status: res.status, data: JSON.parse(textData) };
-                } catch {
-                    return { status: res.status, data: {} };
-                }
+                try { return { status: res.status, data: JSON.parse(textData) }; } 
+                catch { return { status: res.status, data: {} }; }
             } catch (e) {
                 log(`Ошибка сети: ${e.message}`, 'red');
                 return { status: 500, data: {} };
@@ -75,8 +107,10 @@
 
         async function demoSuccess() {
             document.getElementById('log').innerHTML = '';
-            const key = generateKey(); 
             const eventId = document.getElementById('eventId').value;
+            if (!eventId) return log('⚠️ Сначала выберите событие!', 'red');
+
+            const key = generateKey(); 
             const quantity = document.getElementById('quantity').value;
             
             log(`--- Сценарий 1: Успех (Идемпотентность) ---`, '#fff');
@@ -88,14 +122,16 @@
             } else if (r1.status === 200 || r1.status === 201) {
                 log(`✅ УСПЕХ: Сервер вернул успешные ответы.`, '#0f0');
             } else {
-                log(`⚠️ Ошибка: Проверьте вывод лога выше (возможно, неверный event_id).`, 'red');
+                log(`⚠️ Ошибка: Проверьте вывод лога выше.`, 'red');
             }
         }
 
         async function demoConflict() {
             document.getElementById('log').innerHTML = '';
-            const key = generateKey();
             const eventId = document.getElementById('eventId').value;
+            if (!eventId) return log('⚠️ Сначала выберите событие!', 'red');
+
+            const key = generateKey();
             const quantity = document.getElementById('quantity').value;
             
             log(`--- Сценарий 2: Конфликт ---`, '#fff');
@@ -103,6 +139,9 @@
             log(`-> Меняем данные (quantity) с тем же ключом...`, '#aaa');
             await sendRequest(key, eventId, parseInt(quantity) + 1); 
         }
+
+        // Запускаем загрузку событий сразу при открытии страницы
+        window.onload = loadEvents;
     </script>
 </body>
 </html>

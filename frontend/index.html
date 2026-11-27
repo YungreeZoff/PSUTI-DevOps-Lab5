@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лабораторная 5 - Идемпотентность</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f4; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .log { background: #111; color: #0f0; padding: 10px; font-family: monospace; height: 250px; overflow-y: scroll; margin-top: 20px; white-space: pre-wrap; border-radius: 4px; }
+        input, button { padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; }
+        button { cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        .btn-danger { background: #dc3545; }
+        .btn-danger:hover { background: #c82333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Демонстрация идемпотентности (Вариант 20)</h2>
+        
+        <label>ID События (event_id):</label>
+        <input type="text" id="eventId" value="3fa85f64-5717-4562-b3fc-2c963f66afa6">
+
+        <label>Количество мест (quantity):</label>
+        <input type="number" id="quantity" value="1" min="1">
+
+        <button onclick="demoSuccess()">1. Успех: Одинаковые запросы с одним ключом</button>
+        <button class="btn-danger" onclick="demoConflict()">2. Конфликт: Измененный запрос с тем же ключом</button>
+
+        <div class="log" id="log">Лог запросов...</div>
+    </div>
+
+    <script>
+        const API_URL = '/api/v1/reservations'; 
+
+        function log(msg, color = '#0f0') {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += `<div style="color:${color}">${msg}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Функция для генерации ключа без crypto.randomUUID
+        function generateKey() {
+            return 'key-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+        }
+
+        async function sendRequest(key, eventId, quantity) {
+            log(`-> Отправка: ключ=${key.substring(0,8)}..., event=${eventId.substring(0,8)}..., qty=${quantity}`, '#aaa');
+            try {
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Idempotency-Key': key
+                    },
+                    body: JSON.stringify({ 
+                        event_id: eventId, 
+                        quantity: parseInt(quantity)
+                    }) 
+                });
+                
+                const textData = await res.text();
+                log(`<- Ответ [${res.status}]: ${textData}`, res.ok ? '#0f0' : '#ff0');
+                
+                try {
+                    return { status: res.status, data: JSON.parse(textData) };
+                } catch {
+                    return { status: res.status, data: {} };
+                }
+            } catch (e) {
+                log(`Ошибка сети: ${e.message}`, 'red');
+                return { status: 500, data: {} };
+            }
+        }
+
+        async function demoSuccess() {
+            document.getElementById('log').innerHTML = '';
+            const key = generateKey(); 
+            const eventId = document.getElementById('eventId').value;
+            const quantity = document.getElementById('quantity').value;
+            
+            log(`--- Сценарий 1: Успех (Идемпотентность) ---`, '#fff');
+            const r1 = await sendRequest(key, eventId, quantity);
+            const r2 = await sendRequest(key, eventId, quantity);
+            
+            if (r1.data && r1.data.id && r1.data.id === r2.data.id) {
+                log(`✅ УСПЕХ: Одинаковые запросы создали одну бронь с ID: ${r1.data.id}`, '#0f0');
+            } else if (r1.status === 200 || r1.status === 201) {
+                log(`✅ УСПЕХ: Сервер вернул успешные ответы.`, '#0f0');
+            } else {
+                log(`⚠️ Ошибка: Проверьте вывод лога выше (возможно, неверный event_id).`, 'red');
+            }
+        }
+
+        async function demoConflict() {
+            document.getElementById('log').innerHTML = '';
+            const key = generateKey();
+            const eventId = document.getElementById('eventId').value;
+            const quantity = document.getElementById('quantity').value;
+            
+            log(`--- Сценарий 2: Конфликт ---`, '#fff');
+            await sendRequest(key, eventId, quantity); 
+            log(`-> Меняем данные (quantity) с тем же ключом...`, '#aaa');
+            await sendRequest(key, eventId, parseInt(quantity) + 1); 
+        }
+    </script>
+</body>
+</html>

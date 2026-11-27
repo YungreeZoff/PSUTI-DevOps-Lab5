@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: lab5-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: kazan_events
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kazan_events"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ghcr.io/nelkor/kazan-events:latest
+    container_name: lab5-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_HOST: db
+      PG_PORT: 5432
+      PG_DB_NAME: kazan_events
+      PG_USER_NAME: postgres
+      PG_USER_PASSWORD: change-me
+    networks:
+      - app-network
+
+  frontend:
+    build: ./frontend
+    container_name: lab5-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
